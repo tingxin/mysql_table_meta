@@ -14,6 +14,6 @@ python3 app.py  --pwd password123
 
 或者
 ```
- python3 app.py  --pwd Demo1234 --mode web
+ python3 app.py  --pwd password123 --mode web
 ```
 上述命令将启动一个简单的flask服务器，运行在5016端口,可以通过浏览器访问
