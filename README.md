@@ -1,6 +1,8 @@
 # mysql_table_meta
 查询一些基础的表空间信息
 
+![例子](/assets/sample.jpg)
+
 # 前提条件
 ```
 pip3 install -r requirement.txt

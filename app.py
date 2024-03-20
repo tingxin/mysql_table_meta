@@ -1,6 +1,7 @@
 import pymysql.cursors
 import argparse
 import os
+from datetime import datetime
 from flask import Flask
 
 # 需要根据情况修改
@@ -8,18 +9,21 @@ HOST = 'tx-db.cbore8wpy3mc.us-east-2.rds.amazonaws.com'
 PORT = 3306
 USER = 'demo'
 DBName = 'business'
+# 更新meta表，获取更准确的信息。由于meta 表的信息需要手动调用analyze table命令才能更新，但是analyze 命令会对表进行上锁
+# 所以不能频繁执行analyze table命令。所以需要有个间隔时间,不建议设置的太小。单位分钟
+UPDATE_META_INTERVAL_MINUTES = 60
 ###############################################
 
 COLUMNS = ["TABLE_NAME", "TABLE_SCHEMA", "ENGINE", "TABLE_ROWS", "AVG_ROW_LENGTH",
            "DATA_LENGTH", "MAX_DATA_LENGTH", "INDEX_LENGTH,DATA_FREE"]
 
-KPI_NAMES = ["表名称", "数据库名称", "存储引擎", "表空间(GB)", "表空间占比(%)", "索引空间", "数据空间", "碎片率(%)",
+KPI_NAMES = ["表名称", "数据库名称", "存储引擎", "表空间(GB)", "表空间占比(%)", "索引空间(GB)", "数据空间(GB)", "碎片率(%)",
              "表行数", "平均行长度(byte)"]
 
 SQL = f"""
 SELECT {",".join(COLUMNS)}
 FROM information_schema.tables
-where table_schema='{DBName}'
+WHERE table_schema='{DBName}'
 ORDER BY data_length DESC;
 """
 
@@ -29,12 +33,14 @@ SUM(DATA_LENGTH + INDEX_LENGTH) as total_size,
 SUM(DATA_FREE) as free_size
 FROM information_schema.tables;
 """
-t = """
-SELECT TABLE_NAME, TABLE_ROWS
+SQL_TABLE_NAMES = f"""
+SELECT TABLE_NAME
 FROM information_schema.tables 
-where table_schema='business';
+WHERE table_schema='{DBName}'
 """
 
+
+last_update_meta = None
 
 def get_conn():
     if 'pwd' not in os.environ:
@@ -49,18 +55,35 @@ def get_conn():
     return connection
 
 
-def fetch(sql: str):
-    conn = get_conn()
-
+def fetch(sql: str, conn):
     with conn.cursor() as cursor:
         cursor.execute(sql)
         conn.commit()
         t = cursor.fetchall()
         return t
 
+def exec(sql: str, conn):
+    with conn.cursor() as cursor:
+        error = cursor.execute(sql)
+        conn.commit()
+        return error
 
-def handel_summary_stat():
-    rows = fetch(SQL_TOTAL_SIZE)
+def analyze(conn):
+    now = datetime.now()
+    global last_update_meta
+    if not last_update_meta or (now - last_update_meta).total_seconds() > UPDATE_META_INTERVAL_MINUTES * 60:
+        last_update_meta = now
+        table_names = fetch(SQL_TABLE_NAMES, conn)
+        for table_name in table_names:
+            table_name_str = table_name['TABLE_NAME']
+            command = f"ANALYZE TABLE {DBName}.{table_name_str}"
+            print(command)
+            error = exec(command, conn)
+            if error:
+                print(error)
+
+def handel_summary_stat(conn):
+    rows = fetch(SQL_TOTAL_SIZE, conn)
     total_size = rows[0]['total_size']
     free_size = rows[0]['free_size']
     if total_size <= 0:
@@ -85,9 +108,13 @@ def handel_kpi():
 
     table_content.append("\n".join(header))
 
-    total_size, free_size = handel_summary_stat()
+    conn = get_conn()
+    total_size, free_size = handel_summary_stat(conn)
+    print(f"total table size {total_size} and total free {free_size}")
 
-    rows = fetch(SQL)
+    analyze(conn)
+        
+    rows = fetch(SQL, conn)
     index = 0
     for row in rows:
         body = list()
@@ -98,17 +125,21 @@ def handel_kpi():
         body.append(f"<td>{row['ENGINE']}</td>")
 
         # 表空间
-        table_size = (row['DATA_LENGTH'] + row['INDEX_LENGTH']) / 1024 / 1024 / 1024
+        table_size =round((row['DATA_LENGTH'] + row['INDEX_LENGTH']) / 1024 / 1024 / 1024, 4)
         body.append(f"<td>{table_size}</td>")
         # 表空间占比
-        table_size_rato = round(((row['DATA_LENGTH'] + row['INDEX_LENGTH'])) * 100 / total_size, 2)
+        table_size_rato = round(((row['DATA_LENGTH'] + row['INDEX_LENGTH'])) * 100 / total_size, 4)
         body.append(f"<td>{table_size_rato}%</td>")
 
-        body.append(f"<td>{row['INDEX_LENGTH'] / 1024 / 1024 / 1024}</td>")
-        body.append(f"<td>{row['DATA_LENGTH'] / 1024 / 1024 / 1024}</td>")
+        index_size = round(row['INDEX_LENGTH'] / 1024 / 1024 / 1024, 4)
+        body.append(f"<td>{index_size}</td>")
+
+        data_size = round(row['DATA_LENGTH'] / 1024 / 1024 / 1024, 4)
+        body.append(f"<td>{data_size}</td>")
 
         # 碎片率
-        body.append(f"<td>{row['DATA_FREE'] * 100 / free_size}</td>")
+        free_ratio = round(row['DATA_FREE'] * 100 / free_size, 4)
+        body.append(f"<td>{free_ratio}</td>")
         body.append(f"<td>{row['TABLE_ROWS']}</td>")
         body.append(f"<td>{row['AVG_ROW_LENGTH']}</td>")
         body.append("</tr>")
