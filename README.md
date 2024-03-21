@@ -4,9 +4,12 @@
 ![例子](/assets/sample.jpg)
 
 # 前提条件
+1. 安装依赖
 ```
 pip3 install -r requirement.txt
 ```
+2. 执行代码的服务器需要和目标数据库网络打通
+
 
 # 代码中需要修改的部分
 ```python
@@ -28,7 +31,13 @@ UPDATE_META_INTERVAL_MINUTES = 60
 
 # 强烈注意
 ```
-由于程序启动后就会调用 analyze table <table name> 命令，并且会根据UPDATE_META_INTERVAL_MINUTES，再定期调用analyze table命令，而analyze table命令会对对应的表进行锁表（只读锁），造成缩表期间无法修改表，也不能对表写入。analyze table命令 运行的时长依赖 具体表的大小，比较块，都是毫秒级
+由于程序启动后就会调用 analyze table <table name> 命令，并且会根据
+
+UPDATE_META_INTERVAL_MINUTES，再定期调用analyze table命令，而analyze table命令会对对应的表进行
+
+锁表（只读锁），造成缩表期间无法修改表，也不能对表写入。analyze table命令 运行的时长依赖 具体表的大
+
+小，比较块，都是毫秒级
 ```
 
 # 执行
